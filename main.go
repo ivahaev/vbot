@@ -24,7 +24,7 @@ var (
 	subscribers                = map[int64]struct{}{}
 	locker                     sync.RWMutex
 	httpPort                   = "9090"
-	requestMethodsRestrictions = []byte("Only GET and POST request is allowed")
+	requestMethodsRestrictions = []byte("Only POST request is allowed")
 )
 
 func main() {
@@ -76,7 +76,7 @@ func main() {
 				locker.Lock()
 				subscribers[userID] = struct{}{}
 				locker.Unlock()
-				log.Debug(userID, arg)
+				log.WithField("userId", userID).Debug("New user subscribed")
 				_, err = api.SendMessage(ctx,
 					telegram.NewMessagef(userID,
 						"You are subscribed to notifications",
@@ -137,6 +137,7 @@ func startHTTPServer() {
 }
 
 func httpHandler(rw http.ResponseWriter, request *http.Request) {
+	// TODO: Authentification
 	switch request.Method {
 	case http.MethodPost:
 		postHandler(rw, request)

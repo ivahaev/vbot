@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
+	"time"
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/boltdb/bolt"
@@ -17,6 +19,7 @@ import (
 var (
 	token                      string
 	debug                      bool
+	apiKey                     string
 	api                        *telegram.API
 	bot                        *telebot.Bot
 	db                         *bolt.DB
@@ -31,8 +34,12 @@ func main() {
 	if token = os.Getenv("VBOT_TOKEN"); token == "" {
 		panic("Not token provided")
 	}
+	if apiKey = os.Getenv("VBOT_KEY"); apiKey == "" {
+		panic("Not apiKey provided")
+	}
 	if os.Getenv("VBOT_DEBUG") != "" {
 		debug = true
+		log.SetLevel(log.DebugLevel)
 	}
 
 	prepareDb()
@@ -88,9 +95,12 @@ func main() {
 	netCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	err := bot.Serve(netCtx)
-	if err != nil {
-		panic(err)
+	for {
+		err := bot.Serve(netCtx)
+		if err != nil {
+			log.WithError(err).Warn("No connection to telegram")
+		}
+		time.Sleep(time.Millisecond * 200)
 	}
 }
 
@@ -118,10 +128,17 @@ func prepareDb() {
 }
 
 func broadcastMessage(msg string) {
+	log.WithField("msg", msg).Debug("Message received")
 	netCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	log.Debugf("Will send message to %d receivers", len(subscribers))
+	locker.RLock()
+	defer locker.RUnlock()
 	for u := range subscribers {
-		api.SendMessage(netCtx, telegram.NewMessagef(u, msg))
+		_, err := api.SendMessage(netCtx, telegram.NewMessagef(u, msg))
+		if err != nil {
+			log.WithError(err).Error("Can't send message to %d", u)
+		}
 	}
 }
 
@@ -137,7 +154,18 @@ func startHTTPServer() {
 }
 
 func httpHandler(rw http.ResponseWriter, request *http.Request) {
-	// TODO: Authentification
+	key := request.Header.Get("Authorization")
+	if key == "" || !strings.Contains(key, "Basic") {
+		rw.WriteHeader(http.StatusForbidden)
+		rw.Write(nil)
+		return
+	}
+	key = strings.TrimSpace(strings.TrimLeft(key, "Basic"))
+	if key != apiKey {
+		rw.WriteHeader(http.StatusForbidden)
+		rw.Write(nil)
+		return
+	}
 	switch request.Method {
 	case http.MethodPost:
 		postHandler(rw, request)
